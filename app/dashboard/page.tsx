@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { createPlaylist, getPlaylist } from "@/lib/api";
+import { createPlaylist } from "@/lib/api";
+import { io } from "socket.io-client";
+import { Socket } from "socket.io-client";
+
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -13,6 +16,8 @@ export default function DashboardPage() {
   const [playlist, setPlaylist] = useState<any>(null);
   const [error, setError] = useState("");
   const [user, setUser] = useState<any>(null);
+  const socketRef = useRef<Socket | null>(null);
+
 
   useEffect(() => {
     const token = localStorage.getItem("moodtune-token");
@@ -22,6 +27,13 @@ export default function DashboardPage() {
       return;
     }
     if (savedUser) setUser(JSON.parse(savedUser));
+
+    // crear el socket.io client y guardarlo en una ref para usarlo
+    const socket = io(process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002");
+    socketRef.current = socket;
+    return () => {
+      socketRef.current?.disconnect();
+    };
   }, []);
 
   async function handleGenerate() {
@@ -45,19 +57,16 @@ export default function DashboardPage() {
 
     // polling — preguntamos cada 2 segundos si la playlist está lista
     const jobId = data.jobId;
-    const interval = setInterval(async () => {
-      const result = await getPlaylist(jobId);
+    // escucha el evento específico de este jobId
+    socketRef.current?.on(`playlist:${jobId}`, (data) => {
+      setPlaylist(data);
+      setLoading(false); 
+      socketRef.current?.off(`playlist:${jobId}`); // dejar de escuchar este evento para evitar fugas de memoria
+    });
+  }
 
-      if (result.status === "completed") {
-        clearInterval(interval);
-        setPlaylist(result);
-        setLoading(false);
-      } else if (result.status === "failed") {
-        clearInterval(interval);
-        setError("Error generando la playlist");
-        setLoading(false);
-      }
-    }, 2000);
+  function handleHistory() {
+    router.push("/history");
   }
 
   function logout() {
@@ -69,11 +78,27 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gradient-to-br from-[#0f0c29] via-[#302b63] to-[#24243e] p-6">
       {/* header */}
       <div className="flex justify-between items-center mb-8">
-        <h1 className="text-2xl font-bold text-white tracking-widest">
-          🎵 MoodTune
-        </h1>
-        <div className="flex items-center gap-4">
-          {user && <span className="text-white/50 text-sm">{user.email}</span>}
+        {/* izquierda — logo y titulo */}
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => router.push("/dashboard")}>
+          <img src="/icon.png" alt="MoodTune" className="w-10 h-10" />
+          <h1 className="text-2xl font-bold text-white tracking-widest">
+            MoodTune
+          </h1>
+        </div>
+
+        {/* derecha — historial, email y salir */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleHistory}
+            className="px-4 py-2 text-sm text-purple-400 border border-purple-500/50 rounded-lg hover:bg-purple-500/10 cursor-pointer transition-colors"
+          >
+            📋 Mis playlists
+          </button>
+          {user && (
+            <span className="text-white/50 text-sm hidden md:block">
+              {user.email}
+            </span>
+          )}
           <button
             onClick={logout}
             className="px-4 py-2 text-sm text-white/70 border border-white/20 rounded-lg hover:bg-white/10 cursor-pointer transition-colors"
@@ -127,6 +152,22 @@ export default function DashboardPage() {
           >
             {loading ? "Generando playlist..." : "🎵 Generar Playlist"}
           </button>
+          {loading && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 animate-pulse">
+                <div className="h-5 bg-white/10 rounded w-1/3 mb-4" />
+                <div className="flex flex-col gap-3">
+                {[1,2,3,4,5].map((i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
+                    <div className="w-12 h-12 bg-white/10 rounded-lg" />
+                    <div className="flex-1">
+                        <div className="h-3 bg-white/10 rounded w-3/4 mb-2" />
+                        <div className="h-3 bg-white/10 rounded w-1/2" />
+                    </div>
+                    </div>
+                ))}
+                </div>
+            </div>
+            )}
         </div>
 
         {/* playlist resultado */}
